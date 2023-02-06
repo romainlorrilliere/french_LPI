@@ -1,0 +1,168 @@
+---
+title: "Exploration of rlpi R packages"
+author: "RL"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE,comment = FALSE,prompt = FALSE,error = FALSE, message = FALSE)
+```
+
+
+
+
+```{r}
+library(data.table)
+library(rlpi)
+library(ggplot2)
+library(tictoc)
+source("functions/fun_data_preparation.r")
+```
+
+We load the french breeding bird survey data and select data from the Loire-Atlantique department. To simplify the creation of the LPI ID, we only keep the site with a numerical id. 
+
+```{r}
+d <- fread("data/data_FrenchBBS_carre_trend_Benoit_2022-09-14_trend_carre_2001_2019fr.csv")
+
+d44 <- d[departement == 44 & !is.na(as.numeric(carre)),]
+
+```
+We use a homemade function to transform FBBS data to the rlpi format. 
+
+The function filters the site sampled at least two times and the species seen at least once on a site. 
+
+The function also create the data/data_stoc_2019_44_LPI_infile.txt file in which we note the name of the data file. 
+
+```{r}
+print(fbbs2lpi)
+
+```
+
+
+
+The ID should be a numerical value. 
+
+```{r}
+d_lpi_44 <- fbbs2lpi(d44,file.write="data/data_stoc_2019_44_LPI_pops.txt",output = TRUE)
+
+
+print(head(d_lpi_44))
+dim(d_lpi_44)
+```
+
+
+
+```{r}
+startTime <- Sys.time()
+  
+lpi_stoc_44 <-  LPIMain("data/data_stoc_2019_44_LPI_infile.txt", VERBOSE=FALSE, REF_YEAR = 2001,SHOW_PROGRESS = FALSE,plot_lpi = FALSE,save_plots = FALSE,)
+
+
+
+endTime <- Sys.time()
+  
+# prints recorded time
+time1 <- (endTime - startTime)
+cat("Execution time:")
+print(time1)
+
+```
+
+
+
+```{r}
+
+lpi_stoc_44$year  <-  as.numeric(row.names(lpi_stoc_44))
+setDT(lpi_stoc_44)
+
+
+```
+
+
+```{r}
+d_lpi_44[,keep_first_last := year == min(year) | year == last(year), by = ID]
+d_lpi_44[,keep_30 := keep_first_last | rbinom(nrow(d_lpi_44),1,0.3) == 1]
+
+
+```
+
+
+
+
+```{r}
+fbbs2lpi(d_lpi_44[keep_first_last==TRUE,.(binomial,ID,year,popvalue)],file.write="data/data_stoc_2019_44_first_last_LPI_pops.txt",output = FALSE, fromRaw = FALSE)
+
+fbbs2lpi(d_lpi_44[keep_30 == TRUE ,.(binomial,ID,year,popvalue)],file.write="data/data_stoc_2019_44_first_last_30_LPI_pops.txt",output = FALSE, fromRaw = FALSE)
+
+
+
+```
+
+
+
+```{r}
+startTime <- Sys.time()
+  
+lpi_stoc_44_first_last <-  LPIMain("data/data_stoc_2019_44_first_last_LPI_infile.txt", VERBOSE=FALSE, REF_YEAR = 2001,plot_lpi = FALSE,save_plots = FALSE,SHOW_PROGRESS = FALSE)
+
+
+
+endTime <- Sys.time()
+  
+# prints recorded time
+time1_first_last <- (endTime - startTime)
+cat("Execution time:")
+print(time1_first_last)
+
+```
+
+
+
+```{r}
+startTime <- Sys.time()
+  
+lpi_stoc_44_first_last_30 <-  LPIMain("data/data_stoc_2019_44_first_last_30_LPI_infile.txt", VERBOSE=FALSE, REF_YEAR = 2001,plot_lpi = FALSE,save_plots = FALSE,SHOW_PROGRESS = FALSE)
+
+
+
+endTime <- Sys.time()
+  
+# prints recorded time
+time1_first_last_30 <- (endTime - startTime)
+cat("Execution time:")
+print(time1_first_last_30)
+
+```
+
+
+
+
+
+```{r}
+
+lpi_stoc_44_first_last$year  <-  as.numeric(row.names(lpi_stoc_44_first_last))
+setDT(lpi_stoc_44_first_last)
+
+
+lpi_stoc_44_first_last_30$year  <-  as.numeric(row.names(lpi_stoc_44_first_last_30))
+setDT(lpi_stoc_44_first_last_30)
+
+
+
+lpi_stoc_44_first_last_30[,scenario := "first, last and 30%"]
+lpi_stoc_44_first_last[,scenario := "first, last"]
+lpi_stoc_44[,scenario := "all"]
+
+gg_lpi_stoc_44 <- rbind(rbind(lpi_stoc_44,lpi_stoc_44_first_last),lpi_stoc_44_first_last_30)
+
+
+
+
+gg  <-  ggplot(data = gg_lpi_stoc_44, aes(x=year,y=LPI_final,group=scenario,colour=scenario,fill = scenario))
+gg <- gg + geom_line()+ geom_pointrange(aes(ymin=CI_low, ymax=CI_high), shape=20)
+gg <- gg + geom_ribbon(aes(ymin=CI_low, ymax=CI_high),alpha=0.2)
+gg
+
+
+```
