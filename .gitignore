@@ -82,3 +82,4 @@ analysis/movebank_ind.csv
 *.txt#
 *.txt~
 functions/children_of_CD_NOM_fb.R
+functions/LPI-calcul_jbm.R
