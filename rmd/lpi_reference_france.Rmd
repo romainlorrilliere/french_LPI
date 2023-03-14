@@ -214,20 +214,13 @@ gg <- gg + geom_bar(stat="identity", width=1)
 print(gg)
 ```
 
+# Next step 
+ - spatial distribution (number of species in bio-climatic region)
+ - functional traits (taxref)
+    - diet 
+    - mass
+    - migration strategy
+ - conservation status (IUCN)
+ 
+ 
 
-
-
-```{r}
-
-
-```
-
-
-
-
-
-```{r}
-
-
-
-```
