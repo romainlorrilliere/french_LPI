@@ -1,0 +1,233 @@
+---
+title: "Structuration of the vertebrate diversity in metropolitan France"
+author: "RL"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE,comment = FALSE,prompt = FALSE,error = FALSE, message = FALSE)
+```
+
+
+
+
+```{r}
+library(data.table)
+library(ggplot2)
+library(magrittr)
+library(kableExtra)
+source("../functions/children_of_CD_NOM_fb.R")
+```
+
+# TAXREF
+
+We load the last version of the taxref database, TAXREFv16 2022. 
+We only keep the FR column for metropolitan France and the lines corresponding to vertebrate species (without the synonyms).
+
+```{r}
+taxref <- fread('../data/TAXREF_v16_2022/TAXREFv16.txt',
+  encoding="UTF-8",select = c("CD_NOM", "CD_REF", "CD_SUP", "REGNE", "PHYLUM",
+  "CLASSE", "ORDRE", "FAMILLE", "GROUP1_INPN", "GROUP2_INPN", "RANG", "HABITAT",
+  "FR"))
+v_class_verterbrate <- c("Actinopterygii","Amphibia","Aves","Dipneusti","Elasmobranchii","Holocephali","Mammalia","Myxini","Petromyzonti")
+v_ordre_vertebrate <- c("Chelonii", "Squamata", "Crocodylia")
+taxref <- taxref[CD_NOM == CD_REF & RANG == "ES" & (CLASSE %in%v_class_verterbrate | ORDRE %in% v_ordre_vertebrate),]
+#kable(head(taxref),booktabs = TRUE)
+```
+
+We keep only some status 
+
+```{r}
+status <- fread("../data/TAXREF_v16_2022/statuts_note.csv",encoding="Latin-1")
+v_keep_status <- c("P", "E", "S", "C", "I", "J")
+v_natif <- c("P","E","S")
+v_introduit <- c("I","J")
+status[,`:=` (KEEP = STATUT %in% v_keep_status,
+              NATIF_INTRODUIT = ifelse(STATUT %in% v_natif, "NATIVE", ifelse(STATUT %in% v_introduit, "INTRODUCED",NA)))]
+setorder(x=status,-KEEP,ORDRE)
+setnames(status, c("STATUT","DESCRIPTION"),c("STATUS","DESCRIPTION_STATUS"))
+
+status <- status[,.(KEEP,STATUS,NATIF_INTRODUIT,DESCRIPTION_STATUS)]
+k_status <- kable(status,format= "html",full_width = FALSE)
+kable_styling(k_status, "striped", position = "left", font_size = 12)
+```
+
+
+
+
+```{r}
+taxref <- merge(taxref,status[KEEP==TRUE,],by.x = "FR",by.y="STATUS")
+setnames(taxref,"FR","STATUS_FR")
+```
+
+
+The data set : 
+
+
+
+
+
+```{r}
+habitat <- fread("../data/TAXREF_v16_2022/habitats_note.csv")
+habitat <- habitat[,.(HABITAT,HABITAT_name)]
+taxref <- merge(taxref,habitat,by="HABITAT")
+```
+
+```{r}
+the_col <- c("CD_NOM", "CLASSE", "ORDRE", "FAMILLE", "GROUP1_INPN", "GROUP2_INPN","HABITAT","HABITAT_name",
+  "STATUS_FR","NATIF_INTRODUIT","DESCRIPTION_STATUS")
+taxref <- taxref[,..the_col]
+#head(taxref) %>% 
+#  kable_paper("striped") #%>%
+#  scroll_box(width = "100%", height = "200px")
+
+```
+
+# Number of species 
+## All species
+
+```{r}
+
+print(nrow(taxref))
+
+print(taxref[,.(nb = .N),by= GROUP2_INPN])
+
+
+```
+## Continental habitats
+
+## Number of species
+
+```{r}
+vec_cont <- c(2:5,7:8)
+
+vec_cont <- c(2:5,7:8)
+taxref_cont <- taxref[HABITAT %in% vec_cont,]
+taxref_cont[HABITAT == 5, HABITAT_name := "Land"]
+taxref_cont[HABITAT == 4, HABITAT_name := "Freshwater"]
+taxref_cont[HABITAT == 7, HABITAT_name := "Continental (or)"]
+taxref_cont[HABITAT == 8, HABITAT_name := "Continental (and)"]
+
+print(nrow(taxref_cont))
+
+print(taxref_cont[,.(nb=.N),by= .(GROUP2_INPN)])
+
+taxref_cont <- taxref[HABITAT %in% vec_cont,]
+gg_tax_ordre <- taxref_cont[,.(nb = .N),by = .(GROUP2_INPN,ORDRE)]
+setorder(gg_tax_ordre,-nb)
+gg_tax_ordre[,ORDRE := factor(ORDRE, level = ORDRE)]
+gg <- ggplot(gg_tax_ordre,aes(x=ORDRE,y=nb,fill=GROUP2_INPN))+ geom_bar(stat="identity")
+gg <- gg + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+print(gg)
+
+```
+
+### habitat
+```{r}
+
+
+gg_tax <- taxref_cont[,.(nb = .N),by= .(GROUP2_INPN,HABITAT_name)]
+gg <- ggplot(data=gg_tax,aes(y=nb,x=GROUP2_INPN,fill=GROUP2_INPN)) + facet_grid(~HABITAT_name,scales="free")
+gg <- gg + geom_bar(stat="identity", width=1) 
+print(gg)
+```
+
+### introduced species
+
+
+```{r}
+
+gg_tax <- taxref_cont[!is.na(NATIF_INTRODUIT),.(nb = .N),by= .(GROUP2_INPN,NATIF_INTRODUIT)]
+gg <- ggplot(data=gg_tax,aes(y=nb,x=GROUP2_INPN,fill=GROUP2_INPN)) + facet_wrap(.~NATIF_INTRODUIT,scales="free")
+gg <- gg + geom_bar(stat="identity", width=1) 
+print(gg)
+```
+
+
+
+```{r}
+gg_tax <- taxref_cont[!is.na(NATIF_INTRODUIT),.(nb = .N),by= .(GROUP2_INPN,HABITAT_name,NATIF_INTRODUIT)]
+gg <- ggplot(data=gg_tax,aes(y=nb,x=GROUP2_INPN,fill=GROUP2_INPN)) + facet_grid(NATIF_INTRODUIT~HABITAT_name,scales="free")
+gg <- gg + geom_bar(stat="identity", width=1) 
+print(gg)
+```
+
+
+
+
+## Marine habitats
+
+## Number of species
+
+```{r}
+vec_marine <- c(1,4,5)
+
+
+taxref_marine <- taxref[HABITAT %in% vec_marine,]
+taxref_marine[HABITAT == 5, HABITAT_name := "Marine"]
+taxref_marine[HABITAT == 4, HABITAT_name := "Marine"]
+taxref_marine[HABITAT == 7, HABITAT_name := "marineinental (or)"]
+taxref_marine[HABITAT == 8, HABITAT_name := "marineinental (and)"]
+
+print(nrow(taxref_marine))
+
+print(taxref_marine[,.(nb=.N),by= .(GROUP2_INPN)])
+
+taxref_marine <- taxref[HABITAT %in% vec_marine,]
+gg_tax_ordre <- taxref_marine[,.(nb = .N),by = .(GROUP2_INPN,ORDRE)]
+setorder(gg_tax_ordre,-nb)
+gg_tax_ordre[,ORDRE := factor(ORDRE, level = ORDRE)]
+gg <- ggplot(gg_tax_ordre,aes(x=ORDRE,y=nb,fill=GROUP2_INPN))+ geom_bar(stat="identity")
+gg <- gg + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+print(gg)
+
+```
+
+### habitat
+```{r}
+
+
+gg_tax <- taxref_marine[,.(nb = .N),by= .(GROUP2_INPN,HABITAT_name)]
+gg <- ggplot(data=gg_tax,aes(y=nb,x=GROUP2_INPN,fill=GROUP2_INPN)) + facet_grid(~HABITAT_name,scales="free")
+gg <- gg + geom_bar(stat="identity", width=1) 
+print(gg)
+```
+
+### introduced species
+
+
+```{r}
+
+gg_tax <- taxref_marine[!is.na(NATIF_INTRODUIT),.(nb = .N),by= .(GROUP2_INPN,NATIF_INTRODUIT)]
+gg <- ggplot(data=gg_tax,aes(y=nb,x=GROUP2_INPN,fill=GROUP2_INPN)) + facet_wrap(.~NATIF_INTRODUIT,scales="free")
+gg <- gg + geom_bar(stat="identity", width=1) 
+print(gg)
+```
+
+
+
+```{r}
+gg_tax <- taxref_marine[!is.na(NATIF_INTRODUIT),.(nb = .N),by= .(GROUP2_INPN,HABITAT_name,NATIF_INTRODUIT)]
+gg <- ggplot(data=gg_tax,aes(y=nb,x=GROUP2_INPN,fill=GROUP2_INPN)) + facet_grid(NATIF_INTRODUIT~HABITAT_name,scales="free")
+gg <- gg + geom_bar(stat="identity", width=1) 
+print(gg)
+```
+
+
+
+
+```{r}
+
+
+```
+
+
+
+
+
+```{r}
+
+
+
+```
