@@ -48,9 +48,20 @@ dim(lpi2022[Country == "France",])
 lpi2022f <- lpi2022[Country == "France",]
 
 lpi2022f_c <- lpi2022f[,.(Npop = .N), by = .(Class)]
-gg <- ggplot(lpi2022f_c, aes(x="",y = Npop, fill = Class))
+
+v_poisson  <-  c("Elasmobranchii","Petromyzonti","Actinopteri")
+lpi2022f_c[,Groupe := ifelse(Class %in% v_poisson,"Poisson",Class)]
+
+lpi2022f_c[Groupe == "Aves",Groupe := "Oiseaux"]
+lpi2022f_c[Groupe == "Reptilia",Groupe := "Reptiles"]
+lpi2022f_c[Groupe == "Amphibia",Groupe := "Amphibiens"]
+
+gg <- ggplot(lpi2022f_c, aes(x="",y = Npop, fill = Groupe))
 gg <- gg + geom_bar(stat="identity", width=1) +  coord_polar("y", start=0)
+gg <- gg + labs(y="Nombre d'espèces",fill="Groupe")
 gg
+
+
 lpi2022f[,.(Npop = .N), by = .(Class,Common_name)]
 
 lpi2022[,.(n = .N),by = .(Region)]
