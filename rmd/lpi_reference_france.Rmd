@@ -94,6 +94,12 @@ print(nrow(taxref))
 print(taxref[,.(nb = .N),by= GROUP2_INPN])
 
 
+gg <- ggplot(data = taxref[,.(nb = .N),by= GROUP2_INPN],aes (x="",y=nb,fill=GROUP2_INPN) ) 
+gg <- gg + geom_bar(stat = "identity")
+gg <- gg + labs(y="Nombre d'espèces",fill="Groupe")
+gg <- gg + coord_polar("y", start=0)
+print(gg) 
+
 ```
 ## Continental habitats
 
@@ -112,6 +118,14 @@ taxref_cont[HABITAT == 8, HABITAT_name := "Continental (and)"]
 print(nrow(taxref_cont))
 
 print(taxref_cont[,.(nb=.N),by= .(GROUP2_INPN)])
+
+gg <- ggplot(data = taxref_cont[,.(nb = .N),by= GROUP2_INPN],aes (x="",y=nb,fill=GROUP2_INPN) ) 
+gg <- gg + geom_bar(stat = "identity")
+gg <- gg + labs(y="Nombre d'espèces",fill="Groupe")
+gg <- gg + coord_polar("y", start=0)
+print(gg) 
+
+
 
 taxref_cont <- taxref[HABITAT %in% vec_cont,]
 gg_tax_ordre <- taxref_cont[,.(nb = .N),by = .(GROUP2_INPN,ORDRE)]
