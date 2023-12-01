@@ -1,0 +1,193 @@
+---
+title: "Abundance trends of the French river fishes"
+author: "Romain Lorrilliere"
+date: "2023-07-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE,error = FALSE)
+```
+
+```{r lib}
+library(data.table)
+library(sf)
+library(ggplot2)
+library(leaflet)
+library(tmap)
+library(tmaptools)
+library(scales)
+library(lubridate)
+library(glmmTMB)
+library(ggeffects)
+source("../functions/import_table_in2_posgresql.r")
+```
+
+```{r con}
+con <- con_lpi()
+
+```
+
+```{r data}
+query <- "
+SELECT id_site, season, protocol_type, o.opcod, date,year,surface,nb_sp,nb_ind,bassin_name, code, common_name,latin_name,length,biomass, nind, trend_dortel_2023, alien_dortel_2023
+FROM sample as s, observation AS o, species AS sp
+WHERE s.opcod = o.opcod AND o.species = sp.code AND  s.valid = TRUE ;
+"
+d <- send_query(con,query)
+
+print(head(d))
+
+dim(d)
+```
+
+```{r inv}
+query <- "
+SELECT id_site, bassin_name ,opcod, year, date,season,protocol_type
+FROM sample as s
+WHERE s.valid = TRUE ;
+"
+dsample <- send_query(con,query)
+
+
+``` 
+
+
+### Adding absences
+
+```{r add_abs}
+
+vecsp <- unique(d[,code])
+for (sp in vecsp) {
+
+  dsp <- d[code == sp]
+  
+  dsamplesp <- dsample[id_site %in% unique(dsp[,id_site])]
+  dsp_abs <- dsamplesp[!(opcod %in% dsp[,opcod])]
+  dsp_abs[,`:=`(code = sp,biomass = 0,nind=0)]
+
+  dsp <- dsp[,colnames(dsp_abs),with = FALSE]
+  dsp <- rbind(dsp,dsp_abs)
+  
+  if(sp == vecsp[1]) dd <- dsp else dd <- rbind(dd,dsp)
+
+}
+
+dd[,year_txt := as.character(year)]
+setnames(dd,"nind","abundance")
+```
+
+```{r sp}
+query <- "
+SELECT code, common_name,latin_name, trend_dortel_2023, alien_dortel_2023
+FROM species;
+"
+dsp <- send_query(con,query)
+dsp <- dsp[code %in% vecsp]
+
+
+
+print(dsp)
+
+```
+
+```{r description_sp}
+
+d_sample_sp <- dd[,.(nb_sample = .N, sum = sum(abundance)), by = .(code,bassin_name,season,year)]
+d_occ_sp <- dd[abundance >0 ,.(occurence = .N), by = .(code,bassin_name,season,year)]
+d_sample_sp <- merge(d_sample_sp, d_occ_sp, by =c("code","bassin_name","season","year"))
+d_sample_sp[,`:=`(prop = occurence / nb_sample, mean_sum = sum/nb_sample)]
+d_sample_sp[,`:=`(prop_mean = mean(prop), nb_sample_tot = sum(nb_sample)) , by=code]
+d_sample_sp <- merge(d_sample_sp,dsp,by="code")
+
+setorder(d_sample_sp,-nb_sample_tot)
+head(d_sample_sp)
+
+```
+
+```{r loop_gg_desription}
+
+vecsp <- unique(d_sample_sp[,common_name])
+
+gg_d_sp <- melt(data=d_sample_sp[,.(common_name,bassin_name,season,year,nb_sample,mean_sum,prop)],id.vars = c("common_name","bassin_name","season","year"))
+setDT(gg_d_sp)
+
+for(sp in vecsp[1:5]) {
+  sp <- vecsp[1]
+  code_sp <- dsp[common_name == sp, code]
+  sc_sp <- dsp[common_name == sp,latin_name ]
+  gg <- ggplot(data = gg_d_sp[common_name == sp,],aes(x=year,y=value,colour=season,group=season)) + geom_line() + geom_point(size=0.7) + facet_grid(variable~bassin_name,scales = "free_y")
+  gg <- gg + labs(title = paste0(sp," (",sc_sp,", ",code_sp,")"))
+  gg
+  
+  ggsave(paste0("output/",code_sp,"descri.png"),gg,width = 10,height = 8)
+  
+}
+
+
+```
+
+
+
+
+
+```{r model}
+vecbassin <- unique(dd[,bassin_name])
+vecseason <- unique(dd[,season])
+vecvar <- c("abundance","biomass")
+vecfam <- c("nbinom2","gaussian")
+out_init <- FALSE
+for(sp in vecsp) {
+  for(b in vecbassin) {
+    for(s in vecseason) {
+      for(i in 1:2) {
+    ##  sp <- vecsp[1]
+    ##  b = vecbassin[1]
+    ##  s <- vecseason[1]
+    ## i <- 2
+       v <- vecvar[i]
+       f <- vecfam[i]
+  
+      form <- as.formula(paste0(v," ~ year_txt + (1|protocol_type) + (1|id_site)"))
+      md <- try(glmmTMB(form, dd[code == sp & season == s & bassin_name == b],family = f))
+       if(class(md)[1] != "try-error") {
+        ggmd <- as.data.frame(ggpredict(md)$year_txt)
+        setDT(ggmd)
+        setnames(ggmd,"x","year")
+        ggmd[,`:=`(code = sp,variable = v,season = s, bassin_name = b)]
+        if(!out_init) {
+          d_out <- ggmd
+          out_init <- TRUE
+        } else {
+            d_out <- rbind(d_out,ggmd,fill=TRUE)
+          }
+        }
+       }
+    }
+  }
+}
+
+
+d_out <- merge(d_out,dsp,by = "code")
+print(head(d_out))
+
+fwrite(d_out,"d_out_trend_fish.csv")
+
+```
+
+
+
+```{r ggsp}
+
+for(sp in vecsp) {
+  sp <- vecsp[1]
+  dgg_sp <- d_out[code == sp]
+  
+  gg <- ggplot(data = dgg_sp,aes(x=year,y=predicted,colour = season, fill = season,group=season)) + geom_line() + geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.2,colour=NA) + facet_grid(variable~bassin_name,scales ="free_y")
+  gg
+  
+  
+
+}
+
+```

@@ -1,0 +1,183 @@
+---
+title: "Bird data on French rivers gathered from STOC EPS"
+author: "Romain Lorrilliere"
+date: "2023-07-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE,error = FALSE)
+```
+
+```{r lib}
+library(data.table)
+library(sf)
+library(ggplot2)
+library(leaflet)
+library(tmap)
+library(tmaptools)
+library(scales)
+library(lubridate)
+source("../functions/import_table_in2_posgresql.r")
+```
+
+```{r param}
+do_tm <- FALSE
+```
+
+
+```{r con}
+con <- con_lpi()
+
+```
+
+
+
+
+```{r point}
+
+
+q <- "
+SELECT pk_point, gid_hydro,class,distance,nb_year,first_year,last_year FROM stoc_eps_fw.stoc_aqua_river100m;
+"
+d <- send_query(con, q)
+
+nb_site <- nrow(d)
+
+
+
+
+```
+nombre de site : `r nb_site`
+
+
+
+```{r ggsample1}
+
+
+gg <- ggplot(data= d[first_year > 2000,], aes(x="",y=nb_year)) + geom_violin(draw_quantiles = c(0.25,0.5,0.75)) +  geom_jitter(height = 0, width = 0.1)
+gg <- gg + labs(title = "Nombre d'année inventoriées par site (point STOC)", x= "", y = "nombre d'années")
+gg
+```
+
+```{r ggsample2}
+gg <- ggplot(data= d[first_year > 2000,], aes(x="",y=first_year)) + geom_violin(draw_quantiles = c(0.25,0.5,0.75)) +  geom_jitter(height = 0, width = 0.1)
+gg <- gg + labs(title = "Première année inventoriées par site (point STOC)", x= "", y = "Première année")
+gg
+
+```
+
+```{r ggsample3}
+gg <- ggplot(data= d[first_year > 2000,], aes(x="",y=last_year)) + geom_violin(draw_quantiles = c(0.25,0.5,0.75)) +  geom_jitter(height = 0, width = 0.1)
+gg <- gg + labs(title = "Dernière année inventoriées par site (point STOC)", x= "", y = "Dernière année")
+gg
+
+
+```
+```{r inv}
+
+q <- "
+SELECT DISTINCT point, annee FROM stoc_eps_fw.stoc_observation_point WHERE annee > 2000;
+"
+dinv <- send_query(con,q)
+
+```
+```{r gginv}
+
+dinv_gg <- dinv[,.(nombre_point = .N), by = annee]
+setorder(dinv_gg, annee)
+dinv_gg[,annee := as.numeric(as.character(annee))]
+print(dinv_gg)
+gg <- ggplot(data = dinv_gg, aes(x=annee, y = nombre_point))+ geom_point() + geom_line()
+gg <- gg + labs(title = "Variation temporelle du nombre de site (point STOC_EPS) suivis", x= "Année", y="Nombre de sites")
+gg
+
+```
+
+```{r obs}
+q <- "
+SELECT point,annee,nom_francais AS french_name, code_sp, habitat_specialisation_f AS specialisation, abondance_brut, abondance_filtre_tuckey as abondance
+FROM stoc_eps_fw.stoc_aqua_river100m pt
+JOIN stoc_eps_fw.stoc_observation_point o ON pt.pk_point = o.point
+JOIN stoc_eps_fw.stoc_species_list_indicateur i ON o.code_sp = i.pk_species 
+WHERE annee > 2000 AND annee < 2023;;
+"
+dobs <- send_query(con, q)
+
+dobs[,sum_point := sum(abondance),by = .(code_sp,point)]
+
+head(dobs)
+
+
+
+dsp_y <- dobs[annee > 2000,.(nb_occ_y = .N),by = .(french_name, code_sp,specialisation,annee)]
+dsp_y[,totsp := sum(nb_occ_y),by = .(french_name,code_sp,specialisation)]
+setorder(dsp_y,-totsp,-annee)
+
+dsp <- dsp_y[annee > 2000,.(nb_occ = sum(nb_occ_y)),by = .(french_name,code_sp,specialisation)]
+setorder(dsp,-nb_occ)
+#dsp
+##hist(dsp$nb_occ)
+
+```
+
+```{r dsp200}
+
+dsp200 <- dsp[nb_occ > 200,]
+dsp200
+
+nb_sp200 <- nrow(dsp200)
+
+
+```
+nombre d'espèce avec plus de 200 occurences (présence sur un site) sur la série temporelle du suivis : 
+`r nb_sp200`
+
+```{r dsp200gr}
+
+dsp200gr <- dsp200[,.(number_of_sp = .N),by = specialisation]
+dsp200gr
+
+
+
+```
+
+
+```{r abs}
+
+dabs <- expand.grid(annee = 2001 : 2023, code_sp = dsp200[,code_sp])
+setDT(dabs)
+dabs <- merge(dabs,dsp_y[code_sp %in% dsp200[,code_sp],.(code_sp,annee,nb_occ_y) ], all = TRUE, by = c("code_sp", "annee") )
+dabs[is.na(nb_occ_y), nb_occ_y := 0]
+
+dabs <- merge(dabs,dinv_gg, by = "annee")
+setnames(dabs,c("nb_occ_y","nombre_point"), c("Nombre_occurences","Nombre_sites"))
+dabs[,Proportion_occurence := round(Nombre_occurences/Nombre_sites,3)]
+dabs_gg <- melt(dabs,id.vars = c("annee","code_sp"),measure.vars=c("Nombre_occurences","Proportion_occurence"))
+setDT(dabs_gg)
+```
+
+```{r gg_occ}
+table_col <- data.frame(specialisation = c("generaliste","milieux forestiers","milieux bâtis","","Aquatique","milieux agricoles" ), col = c("#762a83","#2ca25f","#de2d26","#878787","#2c7fb8","#fee08b" ))
+setDT(table_col)
+
+for(i in 1:nb_sp200) {
+ 
+   sp <- dsp200[i,code_sp]
+  nom_sp <- dsp200[i,french_name]
+  tot <- dsp200[i,nb_occ]
+  spe <- dsp200[i,specialisation]
+  col <- table_col[specialisation == spe, col]
+  titre <- paste0(nom_sp," (",sp,", nombre d'occurence total: ",tot,", ",spe,")")
+  
+  
+  
+  gg <- ggplot(data = dabs_gg[code_sp == sp,], aes(x = annee, y = value)) + facet_grid(variable~.,scales = "free_y")
+  gg <- gg + geom_point(aes(shape = (value == 0)),colour = col,size =2) + geom_line(colour = col,size = 1.2)
+  gg <- gg + labs(title = titre, x= "Années",y="")
+  print(gg)
+  
+}
+
+
+```

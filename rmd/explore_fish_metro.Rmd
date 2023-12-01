@@ -1,0 +1,597 @@
+---
+title: "Fish data"
+author: "Romain Lorrilliere"
+date: "2023-07-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE,error = FALSE)
+```
+
+```{r lib}
+library(data.table)
+library(sf)
+library(ggplot2)
+library(leaflet)
+library(tmap)
+library(tmaptools)
+library(scales)
+library(lubridate)
+source("../functions/import_table_in2_posgresql.r")
+```
+
+```{r param}
+do_tm <- FALSE
+```
+
+
+```{r con}
+con <- con_lpi()
+
+```
+
+
+## The French river network and sampling site locations
+
+```{r hydro}
+if(do_tm) { 
+
+hydro_sf <- read_sf(con,"hydro")
+bassin_sf <- read_sf(con,"main_bassin_hydro")
+
+hydro1_sf <- subset(hydro_sf,Classe <= 4)
+hydro1_sf$lwd <- 1/hydro1_sf$Classe * 10
+
+}
+
+
+```
+
+
+
+
+```{r map_hydro_1}
+
+if(do_tm) { 
+  
+  myPalette <- get_brewer_pal("Blues", n = 3, contrast = c(0.92,0.57))
+
+tmap_mode("view")
+tm <-   tm_shape(bassin_sf) + tm_fill("bassin_name")  + tm_shape(hydro1_sf) + tm_lines(col = "Classe",palette = myPalette, lwd = "lwd", scale = 2)
+ 
+tmap_save(tm, filename = "img/hydro_reg.html")
+
+}
+
+
+```
+
+
+
+[The map of French rivers](C://git/french_LPI/rmd/img/hydro_reg.html)
+
+```{r hydro_query1}
+query <- "SELECT SUM(ST_LENGTH(ST_TRANSFORM(h.wkb_geometry,2154)))/1000 as length_km FROM hydro as h;"
+hydro_length <- send_query(con, query)
+setDF(hydro_length)
+hydro_length <- round(as.vector(hydro_length[1,1]))
+
+query <- "SELECT COUNT(*) as nb_site FROM site;"
+nb_site <- send_query(con, query)
+setDF(nb_site)
+nb_site <- (as.vector(nb_site[1,1]))
+
+```
+
+
+
+
+```{r hydro_query2}
+
+query <- "SELECT classe as class, SUM(ST_LENGTH(ST_TRANSFORM(h.wkb_geometry,2154)))/1000 as length_km FROM hydro as h GROUP BY classe;"
+dhydro_class <- send_query(con, query)
+
+setDT(dhydro_class)
+
+dhydro_class[,length_km := round(length_km)]
+dhydro_class[,proportion := round(length_km / sum(dhydro_class[,length_km]),3)]
+dhydro_class[,class := as.factor(class)]
+```
+
+
+The total length of the French rivers: `r hydro_length`km distributed in seven classes.  
+The ONEMA-OFB survey is done on `r nb_site`site around France. 
+
+
+
+```{r site_class_river}
+    query <- "
+    SELECT * FROM site_hydro
+"
+    site_hydro <- send_query(con, query)
+
+  class_site <- site_hydro[,.(nb_site = .N),by=section_class]
+  class_site[,proportion_site := nb_site / sum(class_site[,nb_site])]
+setnames(class_site,"section_class","class")
+  class_site[,class := as.factor(class)]
+  dhydro_class <- merge(dhydro_class,class_site,by="class")
+
+  print(dhydro_class)
+  
+```
+
+```{r hydro_gg1_tab}
+setnames(dhydro_class,c("proportion","proportion_site"),c("river","site"))
+gghydro_class <- melt(dhydro_class[,.(class,river,site)],id.vars = "class",measure.vars = c("river","site"))
+```
+
+```{r hydro_gg1}
+ggplot(data = gghydro_class, aes(x=class, y=value, fill=variable)) +
+  geom_bar(stat="identity", position = "dodge",width=0.5) +
+  coord_flip() + labs(y = "Proportion", x= "River classes", fill="")
+ # coord_polar("y", start=0) + 
+
+```
+
+```{r reg_length}
+  query <- "SELECT * FROM length_hydro_bassin"
+b_length <- send_query(con, query)
+
+
+b_length_sum <- b_length[!is.na(bassin_name),.(length_km = sum(length_km)),by = bassin_name]
+b_length_sum[,river := length_km/sum(b_length_sum[,length_km])]
+
+site_b <- site_hydro[,.(nb_site = .N),by = bassin_name]
+site_b[,sites := nb_site / sum(site_b[,nb_site])]
+
+b_length_sum <- merge(b_length_sum,site_b,by="bassin_name")
+
+
+```
+
+```{r hydro_gg2_tab}
+
+ggb_length_sum <- melt(b_length_sum[,.(bassin_name,river,sites)],id.vars = "bassin_name",measure.vars = c("river","sites"))
+```
+
+
+```{r hydro_gg2}
+ggplot(data = ggb_length_sum, aes(x=bassin_name, y=value, fill=variable)) +
+  geom_bar(stat="identity", position = "dodge",width=0.5) +
+  coord_flip() + labs(y = "Proportion", x= "Bassin names", fill="")
+ # coord_polar("y", start=0) + 
+
+```
+
+```{r reg_length_class}
+  query <- "SELECT * FROM length_hydro_bassin"
+b_length <- send_query(con, query)
+
+
+b_length <- b_length[!is.na(bassin_name),]
+b_length[,tot_bassin := sum(length_km),by = .(bassin_name)]
+b_length[,river := length_km/tot_bassin]
+
+site_bc <- site_hydro[,.(nb_site = .N),by = .(bassin_name,section_class)]
+site_bc[,tot_site_bassin := sum(nb_site), by =.(bassin_name)]
+site_bc[,sites := nb_site / tot_site_bassin]
+
+setnames(site_bc,"section_class","classe")
+b_length <- merge(b_length,site_bc,by=c("bassin_name","classe"))
+
+
+```
+
+```{r hydro_gg3_tab}
+
+ggb_length <- melt(b_length[,.(bassin_name,river,sites,classe)],id.vars = c("bassin_name","classe"),measure.vars = c("river","sites"))
+```
+
+
+```{r hydro_gg3}
+ggplot(data = ggb_length, aes(x=classe, y=value, fill=variable)) + facet_wrap(.~bassin_name) +
+  geom_bar(stat="identity", position = "dodge",width=0.5) +
+  coord_flip() + labs(y = "Proportion", x= "River classes", fill="")
+ # coord_polar("y", start=0) + 
+
+```
+
+
+```{r tm_site_hydro}
+if(do_tm) {
+  
+  ## hydro_sf <- read_sf(con,"hydro")
+  ## bassin_sf <- read_sf(con,"main_bassin_hydro")
+ 
+  hydro_sf$lwd <- rescale((-1 * hydro_sf$classe), to = c(0.5,5))
+  hydro_sf_1 <- subset(hydro_sf,classe < 4)
+  
+  
+  hydro_sf_2 <- subset(hydro_sf, gid %in% site_hydro[,id_section])
+  ## hydro_sf_2$lwd <- 
+  
+  myPalette <- get_brewer_pal("Blues", n = 3, contrast = c(0.92,0.57))
+
+  tmap_mode("view")
+  tm <-   tm_shape(bassin_sf) + tm_fill("bassin_name",alpha = 0.5)  + 
+    tm_shape(hydro_sf_1) + tm_lines(alpha = 0.5,col = "black",lwd = "lwd",scale = 0.8) + 
+    tm_shape(hydro_sf_2) + tm_lines(col = "classe",palette = myPalette,lwd = "lwd",scale = 3) + 
+    tm_shape(station_sf) + tm_dots("red")  
+ 
+  tmap_save(tm, filename = "img/onema_sites.html")
+ 
+
+}
+```
+
+
+[The map of the site locations](C://git/french_LPI/rmd/img/onema_sites.html)
+
+# The sample date
+
+
+
+
+```{r date_sample}
+
+query <- "
+SELECT * 
+FROM sample as s, site_hydro as h
+WHERE s.station = h.id_site;"
+sample <- send_query(con,query)
+ 
+sample[,y_day := as.numeric(yday(date))]
+sample[,year := year(date)]
+sample[,date_fig := as.Date(paste0("2020-",substr(date,6,10)))]
+sample[,month := as.numeric(month(date))]
+sample[,season := ifelse(month >= 4 & month <= 7,"spring",ifelse(month >= 8 & month <= 11, "fall",""))]
+sample[,valide := season %in% c("spring","fall")]
+
+nbsample_0 <- nrow(sample)
+nbsammple_1 <- nrow(sample[valide == TRUE])
+
+```
+
+Before the selection process, we have `r nbsample_0` samples in the data set. 
+We keed the sample that done during two season the fall and the spring. 
+Spring operations from April to July, and autumn operations from August to November, were considered as these are periods of good catchability.
+The spring and autumn samples will be considered separately to obtain time series by season. The ecology and behaviour of freshwater fish can lead to significant variations in population size between these periods (Dortel et al., 2022).
+
+```{r gg_date1}
+gg <- ggplot(data = sample[valide==TRUE,], aes (date_fig,fill=season)) + geom_histogram()
+gg <- gg + labs(x = "Date",y="")
+gg
+```
+
+```{r gg_date2}
+gg <- ggplot(data = sample[valide==TRUE,], aes (date_fig,fill=season)) + geom_histogram() + facet_wrap(.~bassin_name, scales = "free_y")
+gg <- gg + labs(x = "Date",y="")
+gg
+```
+
+```{r date_site}
+  sample[,y_day := as.numeric(yday(date))]
+  sample[,year := year(date)]
+  
+  sample[,med_date := median(y_day),by = .(station, bassin_name,season)]
+  sample[,diff_med_date := y_day - med_date]
+  sample[,`:=`(diff_q1 = quantile(diff_med_date,0.25),diff_q3 = quantile(diff_med_date,0.75))]
+  
+  k = 1.5
+  
+  sample[,`:=`(tukey_fences_date_INF = diff_q1-k*(diff_q3-diff_q1),
+               tukey_fences_date_SUP = diff_q3+k*(diff_q3-diff_q1))]
+  
+  sample[valide == TRUE, valide := diff_med_date  >= tukey_fences_date_INF & diff_med_date  <= tukey_fences_date_SUP]
+  
+  nbsammple_2 <- nrow(sample[valide == TRUE,])
+```
+
+To detect the sample that done at a year date to far from the median date of the site survey we used the tukey fences with a parameter _k_ equal to 1.5 to detect these outliers. 
+After this selection there are XXX samples in the data set. 
+  
+```{r ggdate_site}
+gg <- ggplot(sample[season != ""],aes(y=diff_med_date,x= season))  + geom_jitter(aes(color = valide)) + geom_boxplot(fill = NA, colour = "red",outlier.alpha = 0)
+gg
+
+```
+
+
+```{r date_site1}
+  
+  site_date <- sample[valide == TRUE,.(mean_y_day = mean(y_day), sd_y_day = sd(y_day), first_year = min(year), last_year = max(year),nb_sample = .N, duration = 999, completude = 999, trend_y_day = 999, pval = 999), by=.(station, bassin_name,season)]
+
+  nb_sample_sup3 <- sum(site_date[nb_sample > 3,nb_sample])
+  site_date[,valide2 := nb_sample > 3]
+  site_date[,duration := last_year - first_year +1]
+  site_date[,completude := round(nb_sample / duration,3)]
+  site_date[,cat_nb_sample := cut(nb_sample,breaks=c(0,2,3,4,10,20,Inf))]
+  t_nb_sample <- site_date[,.(nb_site = .N), by = .(season,cat_nb_sample)]
+setorder(t_nb_sample,season,cat_nb_sample)
+  print(t_nb_sample)
+```
+
+We keep the site_season survey combination that have at least four samples. 
+We this criteria we keep `r nb_sample_sup3` sample.
+
+
+```{r gg2_date_site1}
+gg <- ggplot(site_date,aes(x=nb_sample)) + geom_histogram() + facet_grid(season~bassin_name) + geom_vline(xintercept = 3.5,colour="red")
+gg
+
+
+```
+
+
+```{r gg1_date_site1}
+  gg_site_date1 <- site_date[(valide2),.(nb=.N),by=.(nb_sample,duration,season,bassin_name)]
+  gg <- ggplot(gg_site_date1,aes(y=nb_sample,x=duration,colour=nb)) + geom_point() + facet_grid(season~bassin_name) + geom_hline(yintercept = 3.5,colour="red") + geom_abline(slope = 1, intercept = 0)
+gg
+
+```
+
+
+
+
+```{r date_site2}
+  
+  vec_period <- c("spring","fall")
+    
+  
+    for(s in unique(sample[,station]))
+  {
+    for(p in vec_period) {
+      ds <- sample[station == s & season == p,]
+      if(nrow(ds) > 1) {
+      md <- lm(y_day~year,data=ds)
+      smd <- as.data.frame(summary(md)$coef)
+      site_date[station == s & season == p, `:=`(trend_y_day = round(smd[2,1],3), pval =  round(smd[2,4],3))]
+    }
+    }
+  }
+  
+  
+  site_date[,cat_trend_y_day := cut(abs(trend_y_day),breaks=c(0,1,2,5,10,Inf))]
+  
+  
+
+  site_trend <- site_date[,.(station,season,first_year,last_year,nb_sample,duration,completude,trend_y_day,pval,cat_trend_y_day,valide2)]
+  setnames(site_trend,"station","id_site")
+  sample <- merge(sample,site_trend,by=c("id_site","season"))
+  sample[,valide := valide & valide2]
+```
+
+
+
+
+
+
+```{r gg_site_date}
+
+gg <- ggplot(data=site_date[(valide2)],aes(x=first_year,y=last_year, colour = completude)) + geom_abline(slope=1,intercept = 0) + geom_point() + facet_grid(season~bassin_name)
+gg
+
+```
+
+
+```{r gg_site_date_2}
+gg <- ggplot(data=site_date[(valide2)],aes(y=trend_y_day,x=pval,colour = cat_trend_y_day)) + geom_point() + facet_grid(season~bassin_name)
+gg
+
+
+```
+
+
+```{r gg_site_date_3}
+
+gg <- ggplot(data=sample[season != "" & valide == TRUE,],aes(y=y_day,x=year, group = station,colour = bassin_name ))  + geom_line() + facet_grid(season~cat_trend_y_day,scales = "free_y")
+gg
+
+
+```
+
+
+```{r valide_trend}
+
+sample[,valide_trend_day := abs(trend_y_day < 5)]
+sample[,valide := valide & valide_trend_day]
+
+nb_sample_final <- nrow(sample[(valide)])
+site_season <- sample[(valide),.(nb = .N),by = .(id_site,season,bassin_name)]
+site_season <- dcast(site_season,id_site + bassin_name ~ season)
+
+setDT(site_season)
+site_season[,survey_season := ifelse(!is.na(fall) & !is.na(spring),"both",ifelse(is.na(fall) ,"spring","fall"))]
+
+
+bassin_season <- site_season[,.(nb = .N),by = .(bassin_name,survey_season)]
+
+
+bassin_season_w <- dcast(bassin_season,bassin_name ~survey_season)
+bassin_season_w[is.na(bassin_season_w)] <- 0
+
+print(bassin_season_w)
+```
+
+
+
+```{r gg_bassin_season}
+
+gg <- ggplot(data=bassin_season,aes(x=survey_season,y=nb))  + geom_bar(stat = "identity") + facet_wrap(.~bassin_name)
+gg
+
+
+```
+
+
+
+```{r gg_map_date_data}
+
+
+site_season_valide <- sample[(valide),.(nb = .N),by = .(id_site,season,bassin_name)]
+setnames(site_season_valide,"id_site","station")
+site_season_valide <- merge(site_season_valide,site_date,by = c("station","season","bassin_name"))
+setnames(site_season_valide,"station","id")
+
+
+station_sf <- read_sf(con,"site")
+station_sf <- merge(station_sf,site_season_valide, by = "id")
+
+bassin_sf <- read_sf(con,"main_bassin_hydro")
+
+```
+
+
+
+```{r gg_map_date}
+
+gg <- ggplot()  + geom_sf(data=bassin_sf,aes(fill = bassin_name), colour = NA,alpha=0.4) + geom_sf(data = station_sf,aes(colour = first_year))+ facet_wrap(.~season)
+gg
+
+
+```
+
+```{r gg_map_date2}
+
+gg <- ggplot()  + geom_sf(data=bassin_sf,aes(fill = bassin_name), colour = NA,alpha=0.4) + geom_sf(data = station_sf,aes(colour = last_year))+ facet_wrap(.~season)
+gg
+
+
+```
+
+
+```{r gg_temporal_series, fig.dim=c(8,12)}
+
+  ggsample_fall <- sample[season == "fall" & valide == TRUE,]
+setorder(ggsample_fall,first_year,last_year)
+vecstation <- unique(ggsample_fall[,station])
+setDF(ggsample_fall)
+ggsample_fall$station <- factor(ggsample_fall$station,levels = vecstation)
+## ggsample_fall[,station := as.factor(station)]
+## levels(ggsample_fall$station) <- vecstation
+gg <- ggplot(data= ggsample_fall,aes(x=station,y=year,group=station,colour=bassin_name))+ geom_line(size=0.5,alpha=0.6) + geom_point(size=1.2) + 
+  coord_flip()
+gg
+
+
+```
+
+
+```{r gg_temporal_series2, fig.dim=c(8,12)}
+
+  ggsample_spring <- sample[season == "spring" & valide == TRUE,]
+setorder(ggsample_spring,first_year,last_year)
+vecstation <- unique(ggsample_spring[,station])
+setDF(ggsample_spring)
+ggsample_spring$station <- factor(ggsample_spring$station,levels = vecstation)
+gg <- ggplot(data= ggsample_spring,aes(x=station,y=year,group=station,colour=bassin_name))+ geom_line(size=0.5,alpha=0.6) + geom_point(size=1.2) + 
+  coord_flip()
+gg
+
+
+```
+
+
+```{r gg_temporal_cat_river, fig.dim=c(10,7)}
+
+ggsample_river<- sample[(valide),.(nb=.N),by=.(section_class,year,season,bassin_name)]
+ggsample_river[,tot := (sum(nb)),by = .(year,season,bassin_name)]
+ggsample_river[,proportion := nb/tot]
+ggsample_river[,section_class := factor(section_class)]
+
+gg <- ggplot(data= ggsample_river,aes(x=year,y=proportion,fill=section_class))+ geom_bar(stat="identity",width = 1) + facet_grid(season~bassin_name) + labs(x = "Years",y = "Proportion",fill= "River categories") + scale_x_continuous(breaks = round(seq(min(ggsample_river$year), max(ggsample_river$year), length.out  = 3)))  + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+gg
+
+
+```
+
+
+```{r data}
+
+
+query <- "
+SELECT * FROM observation AS o, species AS sp
+WHERE o.species = sp.code  ;"
+d <- send_query(con,query)
+setDT(d)
+
+sample_2 <- sample[,.(opcod,season,y_day,valide,bassin_name,year)]
+d <- merge(d,sample_2,by="opcod")
+d <- d[(valide)]
+head(d)
+
+```
+
+
+
+
+All information about the protocole are get from Belliard et al. (2012).
+
+
+### Taxonomic level of identification 
+
+
+Identification is mainly made at the species level, except for bullheads (_Chabot_ in French) and too-small individuals in species in the following list.  
+
+![Size threshold to identification at the species level.](img/list_fish_sp_identification.png)
+
+### Various fieldwork protocols
+
+
+
+
+
+## the species
+
+```{r species}
+d_sum <- d[,.(nb = .N),by = list(year,bassin_name,season,alien_Dortel_2023)]
+
+d_site <- sample_2[,.(nb_site = .N),by = .(year,bassin_name,season)]
+print(d_sum)
+d_sum <- merge(d_sum,d_site,by=c("year","bassin_name","season"))
+
+d_sum[,`:=`(prop = nb/nb_site)]
+
+```
+
+
+
+
+
+```{r gg_d_sum}
+
+gg <- ggplot(data=d_sum,aes(x=year,y=prop,colour=alien_Dortel_2023,group=alien_Dortel_2023))  + geom_point() + geom_line() + facet_grid(season~bassin_name)
+gg
+
+
+```
+
+
+
+```{r species_y, eval=FALSE}
+
+obs_y <- obs[,.(occ = .N, sum_ab = sum(nind)),by = .(common_name,year)]
+
+obs_y <- merge(obs_y,op_y,by="year")
+obs_y[,prop := occ/nb_station]
+setorder(obs_y, common_name,year)
+print(obs_y)
+
+
+gg <- ggplot(data = obs_y,aes(x=year,y=prop,group = common_name,colour=common_name)) + geom_line() + theme(legend.position="none")
+print(gg)
+
+```
+
+
+
+# References 
+
+
+- Belliard J., Ditche JM., Roset N., & Dembski S. (2012). GUIDE PRATIQUE DE MISE EN ŒUVRE DES OPERATIONS DE PECHE A L’ELECTRICITE DANS LE CADRE DES RESEAUX DE SUIVI DES PEUPLEMENTS DE POISSONS. ONEMA.
+- Danet, A., Mouchet, M., Bonnaffé, W., Thébault, E., & Fontaine, C. (2021). Species richness and food-web structure jointly drive community biomass and its temporal stability in fish communities. Ecology Letters, 24(11), 2364‑2377. https://doi.org/10.1111/ele.13857
+- Dortel, E., Besnard, A., & Poulet, N. (2022). Evolution des populations piscicoles et astacicoles de France metropolitaine.
+Vigneron, T., Roset, N., Billy, V. D., Gallet, O., & Wiliam Sremski. (2006). RESEAU HYDROBIOLOGIQUE ET PISCICOLE Rédacteur : Thibault VIGNERON. https://doi.org/10.13140/RG.2.2.23390.48962
+
+
