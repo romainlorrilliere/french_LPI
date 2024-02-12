@@ -1,3 +1,4 @@
+
 library(sf)
 library(ggplot2)
 library(leaflet)
@@ -7,6 +8,7 @@ library(scales)
 library(lubridate)
 library(glmmTMB)
 library(ggeffects)
+library(data.table)
 setwd("script/")
 source("../functions/import_table_in2_posgresql.r")
 
@@ -204,14 +206,23 @@ for(isp in 1:length(vecsp)) {
 }
 
 
+est_out <- fread("output/fish_river_2023-11-27/_estimate.csv")
+
+
 est_out2 <- est_out[code %in% dsp_med[,code]& variable == "abundance"]
 
 sp_exclude <- unique(est_out2[is.na(sd),code])
 est_out2 <- est_out2[!(code %in% sp_exclude),]
 
 
-sim <- rnorm(nrow(est_out2) * 100,rep(as.vector(est_out2[,estimate]),each = 100),rep(as.vector(est_out2[,sd]),each = 100))
-sim <- data.frame(code = rep(est_out2[,code],each = 100),year = rep(est_out2[,year],each = 100),id_sim = rep(1:100,nrow(est_out2)),sim)
+ fwrite(est_out2,"output/fish_river_2023-11-27/_estimate_2.csv")
+
+est_out2 <- fread("output/fish_river_2023-11-27/_estimate_2.csv")
+
+nb_rep <- 500
+
+sim <- rnorm(nrow(est_out2) * nb_rep,rep(as.vector(est_out2[,estimate]),each = nb_rep),rep(as.vector(est_out2[,sd]),each = nb_rep))
+sim <- data.frame(code = rep(est_out2[,code],each = nb_rep),year = rep(est_out2[,year],each = nb_rep),id_sim = rep(1:nb_rep,nrow(est_out2)),sim)
 setDT(sim)
 sim[,pred := exp(sim)]
 sim[year == 1995, pred := 1]
@@ -220,6 +231,180 @@ sim
 sim <- merge(sim, dsp_med, by = "code")
 sim[alien_dortel_2023 == TRUE, group := "alien"]
 sim[alien_dortel_2023 == FALSE, group := "native"]
+
+
+ fwrite(sim,"output/fish_river_2023-11-27/_sim_poisson_1995_2018.csv")
+
+
+#####################################################
+
+
+
+vecvar <- c("abundance","biomass")
+vecfam <- c("nbinom2","gaussian")
+vecoffset <- c("log_surface","surface")
+out_init <- TRUE
+
+
+
+for(isp in 1:length(vecsp)) {
+    ## isp <- 1
+    sp <- vecsp[isp]
+    name <- dsp_med[code == sp,common_name]
+    med <- dsp_med[code == sp, occurence_med]
+
+    cat("\n\n (",isp,"/",length(vecsp),") ",sp)
+
+   i <- 1
+
+        ## sp <- vecsp[1]
+        ## b = vecbassin[1]
+        ## s <- vecseason[1]
+        ## i <- 2
+
+        v <- vecvar[i]
+        f <- vecfam[i]
+        o <- vecoffset[i]
+
+        value_offset <- as.vector(unlist(d[code == sp & year > 2000,o, with = FALSE]))
+
+
+
+        form1 <- as.formula(paste0(v," ~ year_txt + protocol_type + (1 |bassin_name/id_site) + (1|season)"))
+        md1 <- try(glmmTMB(form1, d[code == sp & year > 2000,],offset=value_offset,family = f))
+
+
+        if(class(md1)[1] != "try-error") {
+
+
+            smd1 <- summary(md1)
+            est1 <- as.data.frame(smd1$coefficients$cond)[1:18,]
+            colnames(est1) <- c("estimate","sd","z","p_val")
+            est1$year <- 2001:2018
+            setDT(est1)
+            est1[,z:=NULL]
+            est1[1,`:=`(estimate = 1, sd = 0, p_val = 1)]
+            est1[,`:=`(code = sp,variable = v)]
+
+
+            pred1 <- as.data.frame(ggpredict(md1,terms = c("year_txt"),allow.new.levels=TRUE))
+            setDT(pred1)
+            pred1[,group := "all"]
+
+
+
+            pred <- pred1
+
+            pred[,x := as.numeric(as.character(x))]
+
+            d_init <- pred[x == min(x),.(predicted,group)]
+            setnames(d_init,"predicted","init")
+            pred <- merge(pred,d_init,by = "group")
+            setnames(pred,"x","year")
+
+
+            pred[,`:=`(code = sp,variable = v)]
+            if(out_init) {
+                pred_out <- pred
+                est_out <- est1
+                out_init <- FALSE
+            } else {
+                pred_out <- rbind(pred_out,pred,fill=TRUE)
+                est_out <- rbind(est_out,est1,fill=TRUE)
+            }
+        }
+
+
+    fwrite(pred_out,"output/fish_river_2023-11-27/_predict_2001.csv")
+    fwrite(est_out,"output/fish_river_2023-11-27/_estimate_2001.csv")
+}
+
+
+
+pred_out[,`:=`(predicted = predicted / init,conf.low = conf.low/init, conf.high = conf.high/init) ]
+fwrite(pred_out,"output/fish_river_2023-11-27/_predict_2001.csv")
+
+
+##est_out <- fread("output/fish_river_2023-11-27/_estimate_2001.csv")
+
+
+est_out2 <- est_out[code %in% dsp_med[,code]& variable == "abundance"]
+
+sp_exclude <- unique(est_out2[is.na(sd),code])
+est_out2 <- est_out2[!(code %in% sp_exclude),]
+
+
+ fwrite(est_out2,"output/fish_river_2023-11-27/_estimate_2001_2.csv")
+est_out2 <- fread("output/fish_river_2023-11-27/_estimate_2001_2.csv")
+
+nb_rep <- 500
+
+sim <- rnorm(nrow(est_out2) * nb_rep,rep(as.vector(est_out2[,estimate]),each = nb_rep),rep(as.vector(est_out2[,sd]),each = nb_rep))
+sim <- data.frame(code = rep(est_out2[,code],each = nb_rep),year = rep(est_out2[,year],each = nb_rep),id_sim = rep(1:nb_rep,nrow(est_out2)),sim)
+setDT(sim)
+sim[,pred := exp(sim)]
+sim[year == 2001, pred := 1]
+sim
+
+sim <- merge(sim, dsp_med, by = "code")
+sim[alien_dortel_2023 == TRUE, group := "alien"]
+sim[alien_dortel_2023 == FALSE, group := "native"]
+
+
+ fwrite(sim,"output/fish_river_2023-11-27/_sim_poisson_2001_2018.csv")
+
+
+
+
+
+
+
+
+
+
+####################################################
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 agg_tot <- sim[,.(geom_mean = exp(mean(log(pred))), median = median(pred)),by = .(year,id_sim)]
@@ -347,3 +532,15 @@ for(isp in 1:length(vecsp)) {
 
 }
 
+
+
+
+
+## qq chiffre
+
+d[,id_pop := paste0(id_site,"_",code)]
+
+dpop <- d[,(nb=.N),by = .(id_pop,alien_dortel_2023)]
+
+dpop <- dpop[,(nb_pop = .N),by = alien_dortel_2023]
+dpop

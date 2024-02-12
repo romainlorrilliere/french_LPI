@@ -38,7 +38,9 @@ dobs[,sum_point := sum(obs),by = .(code_sp,point)]
 head(dobs)
 
 dobs[,year_txt := as.character(year)]
+
 dobs[,departement := as.numeric(as.character(departement))]
+
 
 
 fwrite(dobs,"data/obs_bird_river.csv")
@@ -71,7 +73,7 @@ for(i in 1:nrow(dsp)) {
     est1 <- as.data.frame(smd1$coefficients$cond)
     est1 <- est1[c(1,grep("year",rownames(est1))),]
     colnames(est1) <- c("estimate","sd","z","p_val")
-    est1$year <- 2002:2023
+    est1$year <- 2001:2023
     setDT(est1)
     est1[,z:=NULL]
     est1[1,`:=`(estimate = 0, sd = 0, p_val = 1)]
@@ -84,10 +86,10 @@ for(i in 1:nrow(dsp)) {
     pred[,`:=`(code = sp)]
     setorder(pred,year)
 
-    pred[,init := pred[year == 2002,predicted]]
+    pred[,init := pred[year == 2001,predicted]]
     pred[,`:=`(predicted = predicted / init,conf.low = conf.low/init, conf.high = conf.high/init) ]
 
-    ggfile <- paste0("output//bird_river_2023-11-30/glmmTMB_pois_",sp,".png")
+    ggfile <- paste0("output/bird_river_2023-11-30/glmmTMB_pois_",sp,".png")
 
     nom_sp <- dsp[i,french_name]
     tot <- dsp[i,nb_occ]
@@ -116,8 +118,49 @@ fwrite(est_out, "output/bird_river_2023-11-30/_coef_bird_river.csv")
 
 }
 
+
 fwrite(pred_out, "output/bird_river_2023-11-30/_pred_year_bird_river.csv")
 fwrite(est_out, "output/bird_river_2023-11-30/_coef_bird_river.csv")
+
+
+est_out <- fread("output/bird_river_2023-11-30/_coef_bird_river.csv")
+est_out2 <- est_out[! code %in% c("PHYTRO","MOTFLA"),]
+
+nb_rep <- 500
+
+sim <- rnorm(nrow(est_out2) * nb_rep,rep(as.vector(est_out2[,estimate]),each = nb_rep),rep(as.vector(est_out2[,sd]),each = nb_rep))
+sim <- data.frame(code = rep(est_out2[,code],each = nb_rep),year = rep(est_out2[,year],each = nb_rep),id_sim = rep(1:nb_rep,nrow(est_out2)),sim)
+setDT(sim)
+sim[,pred := exp(sim)]
+
+setnames(sim,"code","code_sp")
+
+sim <- merge(sim, dsp, by = "code_sp")
+
+
+
+fwrite(sim, "output/bird_river_2023-11-30/_sim_bird_river_2001_2023.csv")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -158,3 +201,15 @@ coef_year <- merge(coef_year,IC,by = c("code_sp","year"))
 fwrite(coef_year, "output/coef_year_bird_river.csv")
 fwrite(coef_sim, "output/coef_sim_bird_river.csv")
 
+
+
+
+
+## qq chiffre
+
+dobs[,id_pop := paste0(point,"_",code_sp)]
+
+dpop <- dobs[,(nb=.N),by = .(id_pop,specialisation)]
+
+dpop <- dpop[,(nb_pop = .N),by = specialisation]
+dpop

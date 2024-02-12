@@ -480,7 +480,7 @@ WITH
 		SELECT point, annee, code_sp,  abondance_brut, abondance_filtre_tuckey
 		FROM stoc_eps_fw.stoc_observation_point_100 op
 		NATURAL JOIN sp_aqua NATURAL JOIN point_aqua
-		WHERE annee > 2001
+		WHERE annee > 2000
 	),
 	-- all available point for each species
 	sp_point AS (
@@ -519,7 +519,6 @@ INNER JOIN stoc_eps_fw.stoc_species sp ON sp.pk_species = oaa.code_sp
 INNER JOIN stoc_eps_fw.point_annee pa ON pa.id_point = oaa.point AND pa.annee = oaa.annee
 INNER JOIN stoc_eps_fw.stoc_point po ON po.pk_point = oaa.point
 ORDER BY point, oaa.annee, code_sp ;
-
 "
 
 send_query(con, q)
